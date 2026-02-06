@@ -724,4 +724,3 @@ def createPVFormationMap(match_data, events_df, team, color_palette,
                        ha='center', size=labelsize, zorder=2, weight='bold', ax=ax)
         
         
-
