@@ -1,3 +1,24 @@
+# Virtual environments
+venv/
+.venv/
+
+# Python cache
 __pycache__/
-.ipynb_checkpoints
-*/.ipynb_checkpoints/*
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data
+data/
+*.csv
+
+# Models
+*.joblib
+models/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+
