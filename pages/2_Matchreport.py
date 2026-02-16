@@ -40,7 +40,7 @@ PITCH_TEXT = "white"
 # -------------------------
 # CONFIG
 # -------------------------
-DATABASE_URL = "postgresql://postgres.qobyjqmsoogiaixogjul:VaM1aS7BItYoIj14@aws-1-eu-west-2.pooler.supabase.com:5432/postgres"
+DATABASE_URL = os.getenv("SUPABASE_DB_URL")
 MATCHES_TABLE = "eredivisie_matches"
 EVENTS_TABLE = "eredivisie_events"
 
