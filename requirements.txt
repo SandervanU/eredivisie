@@ -7,11 +7,10 @@ mplsoccer==1.2.2
 requests
 unzip
 tqdm
-streamlit
+streamlit>=1.40
 pandas
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.9
-altair<5
 pillow>=10.0.0
 plotly>=5.18.0
 
