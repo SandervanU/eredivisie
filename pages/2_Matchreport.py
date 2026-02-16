@@ -40,7 +40,7 @@ PITCH_TEXT = "white"
 # -------------------------
 # CONFIG
 # -------------------------
-DATABASE_URL = os.getenv("SUPABASE_DB_URL")
+DATABASE_URL = st.secrets["DB_URL"]
 MATCHES_TABLE = "eredivisie_matches"
 EVENTS_TABLE = "eredivisie_events"
 

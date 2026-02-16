@@ -120,7 +120,7 @@ st.markdown(
 # Pas dit aan naar jouw situatie (env var / secrets)
 # Voorbeeld:
 # DATABASE_URL = st.secrets["DATABASE_URL"]
-DATABASE_URL = os.getenv("SUPABASE_DB_URL")
+DATABASE_URL = st.secrets["DB_URL"]
 if not DATABASE_URL:
     st.error("DATABASE_URL ontbreekt. Zet env var DATABASE_URL of gebruik st.secrets.")
     st.stop()
