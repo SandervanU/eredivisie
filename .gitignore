@@ -23,3 +23,12 @@ Thumbs.db
 .vscode/
 
 .env
+
+linecollection.py
+main.py
+modeltraining.ipynb
+montecarlo.ipynb
+test.py
+tutorial.ipynb
+utils.py
+visuals.py
