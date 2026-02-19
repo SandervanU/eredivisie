@@ -210,7 +210,7 @@ def parse_score(s):
 # -----------------------------
 # LOADERS (DB ONLY)  ✅ join via match_id
 # -----------------------------
-PLAYER = "player_totals_truth_90"  # jouw view
+PLAYER = "player_stats"  # jouw view
 
 
 @st.cache_data(show_spinner=False)
@@ -254,7 +254,9 @@ def load_monte_db() -> pd.DataFrame:
             "away_goals_sim",
             "p_home_win",
             "p_draw",
-            "p_away_win"
+            "p_away_win",
+            "exp_home_points",
+            "exp_away_points"
         FROM "{MONTE_TABLE}"
     """)
     return pd.read_sql(q, engine)
@@ -308,7 +310,7 @@ st.markdown(
     f"""
     <div class="hero">
       <h1>Eredivisie Match Centre</h1>
-      <p>Wedstrijden + Monte Carlo voorspellingen — klik straks door naar match details.</p>
+      <p>Wedstrijden + Monte Carlo voorspellingen    
       <div style="margin-top:10px;">
         <span class="chip">Matches: {total_matches}</span>
         <span class="chip">Mode: DB</span>
@@ -338,9 +340,9 @@ top_assists = (
 
 
 top_dribbles = (
-    players[["playername", "dribbles_completed"]]
+    players[["playername", "dribbles_attempted"]]
     .dropna()
-    .sort_values("dribbles_completed", ascending=False)
+    .sort_values("dribbles_attempted", ascending=False)
     .head(3)
 )
 
@@ -421,9 +423,9 @@ with c2:
 with c3:
     st.markdown(
         top3_card(
-            title="Top 3 dribble merchants 😮‍💨",
+            title="Top 3 dribble merchants",
             df=top_dribbles,
-            value_col="dribbles_completed",
+            value_col="dribbles_attempted",
             unit="dribbles",
             height=220,
         ),
@@ -449,6 +451,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+team_filter = st.text_input("Filter op team (home/away bevat):", "")
 
 # ============================================================
 # 2 kolommen: tabel 2x zo breed als chart
@@ -463,10 +466,6 @@ left, right = st.columns([2, 1], gap="large")
 # =========================
 with left:
     st.subheader("Matches")
-
-
-    team_filter = st.text_input("Filter op team (home/away bevat):", "")
-
 
     view = df.copy()
     if team_filter.strip():
@@ -649,14 +648,12 @@ with right:
         return None
 
 
-    # -----------------------------
     # 1) Alleen wedstrijden met Monte Carlo simulatie
     # -----------------------------
     sim = df.copy()
     sim["home_goals_sim"] = pd.to_numeric(sim.get("home_goals_sim"), errors="coerce")
     sim["away_goals_sim"] = pd.to_numeric(sim.get("away_goals_sim"), errors="coerce")
     sim = sim.dropna(subset=["home_goals_sim", "away_goals_sim"])
-
 
     if sim.empty:
         st.warning("Geen Monte Carlo simulaties gevonden.")
@@ -667,25 +664,17 @@ with right:
         sim[["hg", "ag"]] = sim["score"].apply(lambda s: pd.Series(parse_score(s)))
         sim = sim.dropna(subset=["hg", "ag"]).copy()
 
-
         sim[["home_pts", "away_pts"]] = sim.apply(
             lambda r: pd.Series(points_from_goals(int(r["hg"]), int(r["ag"]))),
             axis=1
         )
 
-
         # -----------------------------
-        # 3) Expected goals / points (Monte Carlo)
+        # 3) Expected points (DIRECT: gebruik exp_home_points / exp_away_points)
         # -----------------------------
-        sim["mhg"] = sim["home_goals_sim"].round().astype(int)
-        sim["mag"] = sim["away_goals_sim"].round().astype(int)
-
-
-        sim[["home_pts_exp", "away_pts_exp"]] = sim.apply(
-            lambda r: pd.Series(points_from_goals(r["mhg"], r["mag"])),
-            axis=1
-        )
-
+        sim["exp_home_points"] = pd.to_numeric(sim.get("exp_home_points"), errors="coerce")
+        sim["exp_away_points"] = pd.to_numeric(sim.get("exp_away_points"), errors="coerce")
+        sim = sim.dropna(subset=["exp_home_points", "exp_away_points"])
 
         # -----------------------------
         # 4) Aggregatie per team
@@ -706,16 +695,15 @@ with right:
             .sum()
         )
 
-
         home_exp = (
-            sim.groupby(["home_teamId", "home_team"], as_index=False)["home_pts_exp"]
+            sim.groupby(["home_teamId", "home_team"], as_index=False)["exp_home_points"]
             .sum()
-            .rename(columns={"home_teamId": "teamId", "home_team": "Team", "home_pts_exp": "ExpectedPts"})
+            .rename(columns={"home_teamId": "teamId", "home_team": "Team", "exp_home_points": "ExpectedPts"})
         )
         away_exp = (
-            sim.groupby(["away_teamId", "away_team"], as_index=False)["away_pts_exp"]
+            sim.groupby(["away_teamId", "away_team"], as_index=False)["exp_away_points"]
             .sum()
-            .rename(columns={"away_teamId": "teamId", "away_team": "Team", "away_pts_exp": "ExpectedPts"})
+            .rename(columns={"away_teamId": "teamId", "away_team": "Team", "exp_away_points": "ExpectedPts"})
         )
         expected_pts = (
             pd.concat([home_exp, away_exp], ignore_index=True)
@@ -723,12 +711,10 @@ with right:
             .sum()
         )
 
-
         table_pts = (
             actual_pts.merge(expected_pts, on=["teamId", "Team"], how="outer")
             .fillna(0)
         )
-
 
         # -----------------------------
         # 5) Unieke posities (geen ties)
@@ -736,13 +722,12 @@ with right:
         table_pts = table_pts.sort_values(["ActualPts", "Team"], ascending=[False, True]).reset_index(drop=True)
         table_pts["ActualPos"] = range(1, len(table_pts) + 1)
 
-
         tmp = table_pts.sort_values(["ExpectedPts", "Team"], ascending=[False, True]).reset_index(drop=True)
         tmp["ExpectedPos"] = range(1, len(tmp) + 1)
 
-
         table_pts = table_pts.merge(tmp[["teamId", "ExpectedPos"]], on="teamId", how="left")
         table_pts = table_pts.sort_values("ActualPos").reset_index(drop=True)
+
 
 
         # -----------------------------

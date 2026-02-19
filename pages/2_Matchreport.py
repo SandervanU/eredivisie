@@ -153,6 +153,169 @@ def img_to_data_uri(path: str) -> str | None:
         b64 = base64.b64encode(f.read()).decode("utf-8")
     return f"data:image/png;base64,{b64}"
 
+from mplsoccer import Pitch
+
+from mplsoccer import Pitch
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+
+def plot_shotmap_both_teams(
+    events_df: pd.DataFrame,
+    home_teamId: int,
+    away_teamId: int,
+    home_team: str,
+    away_team: str,
+    *,
+    home_color: str = "#7B68EE",
+    away_color: str = "#E32636",
+    x_col: str = "x",
+    y_col: str = "y",
+    xg_col: str = "xG_model",
+    is_shot_col: str = "isShot",
+    is_goal_col: str = "isGoal",
+    pitch_color: str = "#101827",
+    line_color: str = "#2B3650",
+    title: str = "Shotmap (both teams) • circle size = xG • open=miss • filled=goal",
+):
+    """
+    Compact shotmap sized like your 2 keypass visuals.
+    - Home attacks LEFT  (mirror x)
+    - Away attacks RIGHT (as-is)
+    - Circle size = xG (sqrt scaling)
+    - Open = miss, Filled = goal
+    """
+
+    df = events_df.copy()
+    if df is None or df.empty:
+        return None, "Geen events."
+
+    def _to_bool(v):
+        if v is None:
+            return False
+        if isinstance(v, (bool, np.bool_)):
+            return bool(v)
+        if isinstance(v, (int, float, np.integer, np.floating)):
+            return bool(int(v))
+        s = str(v).strip().lower()
+        return s in ("1", "true", "yes", "y", "t")
+
+    needed = [x_col, y_col, "teamId", xg_col, is_shot_col, is_goal_col]
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        return None, f"Missing kolommen: {missing}"
+
+    df[is_shot_col] = df[is_shot_col].apply(_to_bool)
+    df[is_goal_col] = df[is_goal_col].apply(_to_bool)
+
+    shots = df[df[is_shot_col] == True].copy()
+    if shots.empty:
+        return None, "Geen shots gevonden (na filter op isShot)."
+
+    for c in [x_col, y_col, xg_col]:
+        shots[c] = pd.to_numeric(shots[c], errors="coerce")
+    shots = shots.dropna(subset=[x_col, y_col, xg_col, "teamId"]).copy()
+    if shots.empty:
+        return None, "Geen shots met geldige x/y/xG."
+
+    home_shots = shots[shots["teamId"] == home_teamId].copy()
+    away_shots = shots[shots["teamId"] == away_teamId].copy()
+
+    # Direction: Home left, Away right
+    if not home_shots.empty:
+        home_shots["plot_x"] = 100 - home_shots[x_col]
+        home_shots["plot_y"] = home_shots[y_col]
+    if not away_shots.empty:
+        away_shots["plot_x"] = away_shots[x_col]
+        away_shots["plot_y"] = away_shots[y_col]
+
+    # ---- size mapping (smaller + clearer)
+    # Tuned for compact plot: keep sizes readable but not huge
+    def xg_to_size(xg, min_s=0, max_s=250):
+        try:
+            xg = float(xg)
+        except Exception:
+            xg = 0.01
+        xg = max(xg, 0.01)
+        return min_s + (np.sqrt(xg) * (max_s - min_s))
+
+    # ---- plot: SAME visual height feel as your keypass figs
+    fig, ax = plt.subplots(figsize=(16, 4.6))  # <= compact + wide (like 2 keypass plots)
+    pitch = Pitch(
+        pitch_type="opta",
+        pitch_color=pitch_color,
+        line_color=line_color,
+        goal_type="box"
+    )
+    pitch.draw(ax=ax)
+    fig.patch.set_facecolor("#0B1220")
+    ax.set_facecolor("#0B1220")
+
+    # Make pitch occupy more of the canvas (less margins)
+    plt.subplots_adjust(left=0.01, right=0.99, top=0.88, bottom=0.06)
+
+    # Styling: clearer circles
+    miss_alpha = 0.85
+    goal_alpha = 0.90
+    miss_lw = 2.4          # thicker ring
+    goal_lw = 2.6          # stronger edge for goals
+    goal_edge = "white"    # white edge like you had (clear)
+    goal_fill_alpha = 0.80 # slightly less “blob”, still filled
+
+    def _plot_team(team_df: pd.DataFrame, color: str):
+        if team_df is None or team_df.empty:
+            return
+
+        is_goal = team_df[is_goal_col].astype(bool).values
+
+        miss_df = team_df[~is_goal].copy()
+        if not miss_df.empty:
+            pitch.scatter(
+                miss_df["plot_x"], miss_df["plot_y"],
+                s=miss_df[xg_col].apply(xg_to_size).values,
+                facecolors="none",
+                edgecolors=color,
+                linewidth=miss_lw,
+                alpha=miss_alpha,
+                ax=ax,
+                zorder=3
+            )
+
+        goal_df = team_df[is_goal].copy()
+        if not goal_df.empty:
+            # filled with same color but slightly transparent so lines remain readable
+            pitch.scatter(
+                goal_df["plot_x"], goal_df["plot_y"],
+                s=goal_df[xg_col].apply(xg_to_size).values,
+                facecolors=color,
+                edgecolors=goal_edge,
+                linewidth=goal_lw,
+                alpha=goal_fill_alpha,
+                ax=ax,
+                zorder=5
+            )
+
+    _plot_team(home_shots, home_color)
+    _plot_team(away_shots, away_color)
+
+    # Title smaller (fits your dashboard style)
+    ax.text(
+        50, 104,
+        "SHOTMAP (BOTH TEAMS) | CIRCLE SIZE = XG | OPEN = MISS | FILLED = GOAL",
+        size=10,
+        fontweight="bold",
+        ha="center",
+        va="center",
+        c=PITCH_TEXT
+    )
+
+
+
+    return fig, None
+
+
+
 
 # ============================================================
 # DB LOADERS
@@ -167,6 +330,8 @@ def load_matches_db() -> pd.DataFrame:
             "away_team",
             "home" AS home_json,
             "away" AS away_json,
+            "game",
+             "venueName",
             (("home"::jsonb -> 0 ->> 'teamId')::int) AS "home_teamId",
             (("away"::jsonb -> 0 ->> 'teamId')::int) AS "away_teamId"
         FROM "{MATCHES_TABLE}"
@@ -293,10 +458,10 @@ def plot_epv_over_time_plotly(
     fig.add_hline(y=0, line_width=1, line_color="rgba(255,255,255,0.25)")
 
     fig.update_layout(
-        height=260,
+        height=330,
         margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor="#0B1220",
-        plot_bgcolor="#0F172A",
+        paper_bgcolor=THEME_BG,
+        plot_bgcolor=THEME_PANEL,
         showlegend=False,
         font=dict(color="white", size=11),
         xaxis=dict(
@@ -469,7 +634,7 @@ def pass_network_same_logic_as_old(
         )
 
     ax.text(
-        50, 104, f"{team_name} (Mins 1-{sub_minute})".upper(),
+        50, 104, f"Passing network {team_name} (Mins 1-{sub_minute})".upper(),
         size=10, fontweight="bold", ha="center", va="center", c=PITCH_TEXT
     )
 
@@ -506,15 +671,21 @@ with st.container():
             unsafe_allow_html=True,
         )
 
-        match_ids = matches["match_id"].sort_values().tolist()
-        selected_match_id = st.selectbox(
+        m_sorted = matches.sort_values("match_id").copy()
+
+        game_options = m_sorted["game"].dropna().astype(str).tolist()
+
+        selected_game = st.selectbox(
             label="",
-            options=match_ids,
+            options=game_options,
             key="match_select_header",
             label_visibility="collapsed"
         )
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+selected_match_id = int(m_sorted.loc[m_sorted["game"].astype(str) == str(selected_game), "match_id"].iloc[0])
+selected_venue = str(m_sorted.loc[m_sorted["game"].astype(str) == str(selected_game), "venueName"].iloc[0])
 
 with st.spinner("Loading events…"):
     events = load_events(selected_match_id)
@@ -529,14 +700,6 @@ away_teamId = int(row["away_teamId"])
 home_data = parse_team_json(row["home_json"])
 away_data = parse_team_json(row["away_json"])
 
-st.markdown(
-    f"""
-    <span class="chip">Match ID: {selected_match_id}</span>
-    <span class="chip">Home: {home_team} ({home_teamId})</span>
-    <span class="chip">Away: {away_team} ({away_teamId})</span>
-    """,
-    unsafe_allow_html=True,
-)
 
 
 # ============================================================
@@ -546,7 +709,7 @@ home_logo_uri = img_to_data_uri(f"logo/{home_teamId}.png")
 away_logo_uri = img_to_data_uri(f"logo/{away_teamId}.png")
 
 score_text = f"{score}"
-meta_text = f"Match ID {selected_match_id}"
+meta_text = f"Venue: {selected_venue}"
 
 components.html(
     f"""
@@ -661,33 +824,6 @@ components.html(
     height=120,
     scrolling=False
 )
-
-
-# ============================================================
-# LAYOUT: LEFT | MIDDLE | RIGHT
-# ============================================================
-st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-
-left_col, mid_col, right_col = st.columns([1.5, 4, 1.5], gap="small")
-
-with left_col:
-    with st.spinner("Building L1 (home pass network)…"):
-        fig, err = pass_network_same_logic_as_old(
-            events, home_teamId, home_team, home_data,
-            team_color=HOME_COLOR,
-            max_line_width=6, marker_size=1500, edgewidth=3,
-            marker_edge_color="w",
-            kit_no_size=25
-        )
-    if err:
-        st.error(err)
-    else:
-        st.pyplot(fig, use_container_width=True)
-
-    st.markdown(
-        "<div class='card'><div class='muted'>L2</div><div class='big'>Placeholder (smalle visual)</div></div>",
-        unsafe_allow_html=True
-    )
 
 
 # ============================================================
@@ -863,6 +999,48 @@ def resolve_name(pid: int, name_lookup_events: dict, name_lookup_team: dict) -> 
         or name_lookup_team.get(pid)
         or f"ID {pid}"
     )
+
+def build_goal_badges(events: pd.DataFrame, team_id: int):
+    """
+    Returns:
+      {playerId: "⚽ 10', 19'" }  of  {playerId: "⚽❌ 12', 55'"}
+    (Dus: 1 goal-icoon per speler, maar wel alle minuten.)
+    """
+    if events is None or events.empty:
+        return {}
+
+    goals = events[
+        (events["teamId"] == team_id) &
+        (events["isGoal"] == True)
+    ].copy()
+
+    if goals.empty:
+        return {}
+
+    # zorg dat minute netjes int is
+    goals["minute"] = pd.to_numeric(goals["minute"], errors="coerce")
+    goals = goals.dropna(subset=["playerId", "minute"])
+    goals["playerId"] = goals["playerId"].astype(int)
+    goals["minute"] = goals["minute"].astype(int)
+
+    badges = {}
+
+    for pid, grp in goals.groupby("playerId"):
+        minutes = sorted(grp["minute"].tolist())
+        mins_txt = ", ".join([f"{m}'" for m in minutes])
+
+        # als er minstens 1 own goal is, dan toon ❌-variant
+        # (zelfde logica als jij had, maar één icoon)
+        is_own_any = bool(grp.get("isOwnGoal", False).fillna(False).astype(bool).any()) if "isOwnGoal" in grp.columns else False
+        icon = "⚽❌" if is_own_any else "⚽"
+
+        badges[int(pid)] = f"{icon} {mins_txt}"
+
+    return badges
+
+
+
+
 
 
 def sub_badge(direction: str, minute: int) -> str:
@@ -1058,15 +1236,212 @@ def plot_key_pass_zones_with_arrows(
     # title + direction of play
     dir_txt = direction.upper()
     arrow_char = "←" if dir_txt == "LEFT" else "→"
-    ax.set_title(
-        f"{team_name}\nKey Passes by zone  |  Direction of play {arrow_char} {dir_txt}",
-        color="white",
-        fontsize=12,
-        fontweight="bold",
-        pad=10
+    ax.text(
+        50, 104,
+        f"{team_name} | KEY PASSES BY ZONE | DIRECTION OF PLAY {arrow_char} {dir_txt}".upper(),
+        size=10, fontweight="bold",
+        ha="center", va="center",
+        c=PITCH_TEXT
     )
 
+
     return fig, None
+
+# =========================================================
+# STATS CARD (ABOVE SHOTMAP) - ONLY selected metrics
+# =========================================================
+def _to_bool(v):
+    if v is None:
+        return False
+    if isinstance(v, (bool, np.bool_)):
+        return bool(v)
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return bool(int(v))
+    s = str(v).strip().lower()
+    return s in ("1", "true", "yes", "y", "t")
+
+def _has_keypass(qual_list) -> bool:
+    # re-use your qualifier parsing style
+    for q in qual_list or []:
+        if not isinstance(q, dict):
+            continue
+        t = q.get("type")
+        # accept both {"type":"KeyPass"} and {"type":{"value":"KeyPass"}} patterns
+        if isinstance(t, str) and t == "KeyPass":
+            return True
+        if isinstance(t, dict) and (t.get("value") == "KeyPass" or t.get("displayName") == "KeyPass"):
+            return True
+        if q.get("value") == "KeyPass" or q.get("displayName") == "KeyPass" or q.get("name") == "KeyPass":
+            return True
+    return False
+
+def compute_selected_team_stats(events_df: pd.DataFrame, team_id: int) -> dict:
+    df = events_df.copy()
+    if df is None or df.empty:
+        return {
+            "goals": 0, "shots": 0, "sot": 0, "xg": 0.0,
+            "passes": 0, "pass_comp": 0.0, "key_passes": 0
+        }
+
+    df = df[df["teamId"] == team_id].copy()
+
+    # goals
+    goals = int((df["type"] == "Goal").sum())
+
+    # shots + shots on target + xG (using your shot definition)
+    shot_types = {"Goal", "MissedShots", "SavedShot", "ShotOnPost"}
+    shots_df = df[df["type"].isin(shot_types)].copy()
+    shots = int(len(shots_df))
+    sot = int(df["type"].isin({"Goal", "SavedShot"}).sum())
+
+    if "xG_model" in shots_df.columns and not shots_df.empty:
+        shots_df["xG_model"] = pd.to_numeric(shots_df["xG_model"], errors="coerce").fillna(0.0)
+        xg = float(shots_df["xG_model"].sum())
+    else:
+        xg = 0.0
+
+    # passes + completion %
+    passes_df = df[df["type"] == "Pass"].copy()
+    passes = int(len(passes_df))
+    if passes > 0 and "outcomeType" in passes_df.columns:
+        completed = int((passes_df["outcomeType"] == "Successful").sum())
+        pass_comp = (completed / passes) * 100
+    else:
+        completed = 0
+        pass_comp = 0.0
+
+    # key passes (qualifiers)
+    if passes > 0 and "qualifiers" in passes_df.columns:
+        passes_df["__q__"] = passes_df["qualifiers"].apply(_parse_qualifiers)
+        key_passes = int(passes_df["__q__"].apply(_has_keypass).sum())
+    else:
+        key_passes = 0
+    
+    # progressive passes (zoals jouw SQL: endX - x >= 10)
+    if passes > 0 and "endX" in passes_df.columns and "x" in passes_df.columns:
+        passes_df["endX"] = pd.to_numeric(passes_df["endX"], errors="coerce")
+        passes_df["x"] = pd.to_numeric(passes_df["x"], errors="coerce")
+        dx = passes_df["endX"] - passes_df["x"]
+        progressive_passes = int((dx >= 10).sum())
+    else:
+        progressive_passes = 0
+
+    return {
+        "goals": goals,
+        "shots": shots,
+        "sot": sot,
+        "xg": xg,
+        "passes": passes,
+        "pass_comp": pass_comp,
+        "progressive_passes": progressive_passes,
+        "key_passes": key_passes
+    }
+
+def render_stat_row(label: str, left_val, right_val,
+                    *, left_color=HOME_COLOR, right_color=AWAY_COLOR):
+
+    def _to_float(v):
+        try:
+            return float(str(v).replace("%", "").split()[0])
+        except Exception:
+            return 0.0
+
+    lv = _to_float(left_val)
+    rv = _to_float(right_val)
+
+    total = lv + rv
+    share = lv / total if total > 0 else 0.5
+
+    n = 5
+    left_fill = int(round(share * n))
+    right_fill = n - left_fill
+
+    left_dots  = "●" * left_fill + "○" * (n - left_fill)
+    right_dots = "●" * right_fill + "○" * (n - right_fill)
+
+    st.markdown(
+        f"""
+        <div style="
+            display:grid;
+            grid-template-columns: 1.4fr 2.2fr 1.4fr;
+            align-items:center;
+            margin:6px 0;
+        ">
+
+          <!-- LEFT -->
+          <div style="text-align:right; padding-right:10px;">
+            <span style="color:{left_color}; font-weight:900; margin-right:6px;">
+              {left_val}
+            </span>
+            <span style="color:{left_color}; font-size:18px; letter-spacing:2px;">
+              {left_dots}
+            </span>
+          </div>
+
+          <!-- LABEL -->
+          <div style="
+              text-align:center;
+              color:white;
+              font-weight:800;
+              font-size:13px;
+              opacity:0.95;
+          ">
+            {label}
+          </div>
+
+          <!-- RIGHT -->
+          <div style="text-align:left; padding-left:10px;">
+            <span style="color:{right_color}; font-size:18px; letter-spacing:2px;">
+              {right_dots}
+            </span>
+            <span style="color:{right_color}; font-weight:900; margin-left:6px;">
+              {right_val}
+            </span>
+          </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# --- compute stats
+home_stats = compute_selected_team_stats(events, home_teamId)
+away_stats = compute_selected_team_stats(events, away_teamId)
+
+# ============================================================
+# LAYOUT: LEFT | MIDDLE | RIGHT
+# ============================================================
+st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+left_col, mid_col, right_col = st.columns([1.8, 4, 1.8], gap="small")
+
+with left_col:
+    with st.spinner("Building L1 (home pass network)…"):
+        fig, err = pass_network_same_logic_as_old(
+            events, home_teamId, home_team, home_data,
+            team_color=HOME_COLOR,
+            max_line_width=6, marker_size=1500, edgewidth=3,
+            marker_edge_color="w",
+            kit_no_size=25
+        )
+    if err:
+        st.error(err)
+    else:
+        st.pyplot(fig, use_container_width=True)
+    
+        fig, err = plot_key_pass_zones_with_arrows(
+                events,
+                team_id=home_teamId,
+                team_name=home_team,
+                team_color=HOME_COLOR,
+                direction="LEFT",     # HOME attack direction
+                n_x=6, n_y=4
+            )
+    if err:
+         st.error(err)
+    else:
+        st.pyplot(fig, use_container_width=True)
 
 
 with mid_col:
@@ -1090,11 +1465,13 @@ with mid_col:
 
     home_off_map, home_on_map = pair_substitutions(events, home_teamId)
     away_off_map, away_on_map = pair_substitutions(events, away_teamId)
+    home_goal_badge = build_goal_badges(events, home_teamId)
+    away_goal_badge = build_goal_badges(events, away_teamId)
 
     # =========================================================
-    # 3-KOLOMS: HOME | EPV | AWAY  (HORIZONTAAL)
+    # 3-KOLOMS: HOME | SHOTMAP | AWAY  (HORIZONTAAL)
     # =========================================================
-    lu_home_col, epv_col, lu_away_col = st.columns([1.5, 4, 1.5], gap="small")
+    lu_home_col, shot_col, lu_away_col = st.columns([2, 4, 2], gap="small")
 
     # -------------------------
     # HOME LINE-UP (LINKS)
@@ -1115,34 +1492,41 @@ with mid_col:
             elif pid in home_on_map:
                 badge = sub_badge("on", home_on_map[pid])
 
+            goal_badge = home_goal_badge.get(pid, "")
+            if goal_badge:
+                goal_badge = f"<span style='margin-left:6px;color:white;font-weight:900'>{goal_badge}</span>"
+
             st.markdown(
                 f"""
                 <div style="display:flex;align-items:center;gap:10px;padding:3px 0;color:white;font-size:13px">
-                  <div style="
-                      width:26px;height:26px;border-radius:999px;
-                      background:{HOME_COLOR};
-                      border:2px solid white;
-                      display:flex;align-items:center;justify-content:center;
-                      font-weight:800;font-size:12px;
-                      flex:0 0 26px;
-                  ">{nr}</div>
+                <div style="
+                    width:26px;height:26px;border-radius:999px;
+                    background:{HOME_COLOR};
+                    border:2px solid white;
+                    display:flex;align-items:center;justify-content:center;
+                    font-weight:800;font-size:12px;
+                    flex:0 0 26px;
+                ">{nr}</div>
 
-                  <div style="
-                      opacity:.95;
-                      white-space:nowrap;
-                      overflow:hidden;
-                      text-overflow:ellipsis;
-                      max-width:220px;
-                  ">{name}</div>
+                <div style="
+                    opacity:.95;
+                    white-space:nowrap;
+                    overflow:hidden;
+                    text-overflow:ellipsis;
+                    max-width:220px;
+                ">{name}{goal_badge}</div>
 
-                  <div style="display:flex;gap:6px;white-space:nowrap">{badge}</div>
+                <div style="display:flex;gap:6px;white-space:nowrap">{badge}</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
         # bench
-        st.markdown("<div style='opacity:.5;font-size:12px;color:white;margin:8px 0'> Bench </div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='opacity:.5;font-size:12px;color:white;margin:8px 0'> Bench </div>",
+            unsafe_allow_html=True
+        )
 
         for nr, pid in home_bench:
             name = resolve_name(pid, name_lookup_events, home_name_team)
@@ -1153,90 +1537,79 @@ with mid_col:
             elif pid in home_off_map:
                 badge = sub_badge("off", home_off_map[pid])
 
+            goal_badge = home_goal_badge.get(pid, "")
+            if goal_badge:
+                goal_badge = f"<span style='margin-left:6px;color:white;font-weight:900'>{goal_badge}</span>"
+
             st.markdown(
                 f"""
                 <div style="display:flex;align-items:center;gap:10px;padding:2px 0;color:white;font-size:12px;opacity:.9">
-                  <div style="
-                      width:22px;height:22px;border-radius:999px;
-                      background:#374151;border:1px solid rgba(255,255,255,.4);
-                      display:flex;align-items:center;justify-content:center
-                  ">{nr if nr is not None else ''}</div>
+                <div style="
+                    width:22px;height:22px;border-radius:999px;
+                    background:#374151;border:1px solid rgba(255,255,255,.4);
+                    display:flex;align-items:center;justify-content:center
+                ">{nr if nr is not None else ''}</div>
 
-                  <div style="
-                      white-space:nowrap;
-                      overflow:hidden;
-                      text-overflow:ellipsis;
-                      max-width:220px;
-                  ">{name}</div>
+                <div style="
+                    white-space:nowrap;
+                    overflow:hidden;
+                    text-overflow:ellipsis;
+                    max-width:220px;
+                ">{name}{goal_badge}</div>
 
-                  <div style="display:flex;gap:6px;white-space:nowrap">{badge}</div>
+                <div style="display:flex;gap:6px;white-space:nowrap">{badge}</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
     # -------------------------
-    # EPV (MIDDEN)
-    with epv_col:
+    # SHOTMAP (MIDDEN)  ✅ blijft tussen de line-ups
+    # -------------------------
 
-        st.markdown(
-            "<div style='font-weight:800;font-size:14px;color:white;margin-bottom:4px'>"
-            "Expected Possession Value (EPV)"
-            "</div>",
+    with shot_col:
+        with st.container():
+            st.markdown(
+            f"""
+            <div style="
+                border:1px solid rgba(255,255,255,0.10);
+                background:{THEME_PANEL};
+                border-radius:16px;
+                padding:12px 14px;
+                margin: 8px 0 12px 0;
+            ">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div style="font-weight:900;color:white;">MATCH STATS</div>
+                <div style="font-size:12px;opacity:.7;color:white;">{home_team} vs {away_team}</div>
+            </div>
+            """,
             unsafe_allow_html=True
         )
 
-        fig, err = plot_epv_over_time_plotly(
+        render_stat_row("Goals", home_stats["goals"], away_stats["goals"])
+        render_stat_row("Shots (On Target)", f'{home_stats["shots"]} ({home_stats["sot"]})', f'{away_stats["shots"]} ({away_stats["sot"]})')
+        render_stat_row("Expected Goals (xG)", f'{home_stats["xg"]:.2f}', f'{away_stats["xg"]:.2f}')
+        render_stat_row("Passes", home_stats["passes"], away_stats["passes"])
+        render_stat_row("Pass completion %", f'{home_stats["pass_comp"]:.0f}%', f'{away_stats["pass_comp"]:.0f}%')
+        render_stat_row("Key passes", home_stats["key_passes"], away_stats["key_passes"])
+        render_stat_row("Progressive passes", home_stats["progressive_passes"], away_stats["progressive_passes"])
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        fig, err = plot_shotmap_both_teams(
             events,
-            home_teamId,
-            away_teamId,
-            home_team,
-            away_team,
-            epv_col="EPV",
+            home_teamId, away_teamId,
+            home_team, away_team,
             home_color=HOME_COLOR,
-            away_color=AWAY_COLOR
+            away_color=AWAY_COLOR,
+            pitch_color=PITCH_COLOR,
+            line_color=PITCH_LINE_COLOR
         )
 
         if err:
             st.error(err)
         else:
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-        st.markdown(
-            "<div style='font-weight:800;font-size:14px;color:white;margin-bottom:4px'>"
-            "Key Passes (Passes leading up to a shot)"
-            "</div>",
-            unsafe_allow_html=True
-        )
-        kp_left, kp_right = st.columns(2, gap="small")
-        with kp_left:
-            fig, err = plot_key_pass_zones_with_arrows(
-                events,
-                team_id=home_teamId,
-                team_name=home_team,
-                team_color=HOME_COLOR,
-                direction="LEFT",     # HOME attack direction
-                n_x=6, n_y=4
-            )
-            if err:
-                st.error(err)
-            else:
-                st.pyplot(fig, use_container_width=True)
-
-        with kp_right:
-            fig, err = plot_key_pass_zones_with_arrows(
-                events,
-                team_id=away_teamId,
-                team_name=away_team,
-                team_color=AWAY_COLOR,
-                direction="RIGHT",    # AWAY attack direction
-                n_x=6, n_y=4
-            )
-            if err:
-                st.error(err)
-            else:
-                st.pyplot(fig, use_container_width=True)
-
+            st.pyplot(fig, use_container_width=True)
 
     # -------------------------
     # AWAY LINE-UP (RECHTS)
@@ -1247,7 +1620,6 @@ with mid_col:
             unsafe_allow_html=True
         )
 
-        # basis
         for nr, pid in away_players:
             name = resolve_name(pid, name_lookup_events, away_name_team)
 
@@ -1257,35 +1629,47 @@ with mid_col:
             elif pid in away_on_map:
                 badge = sub_badge("on", away_on_map[pid])
 
+            goal_badge = away_goal_badge.get(pid, "")
+            if goal_badge:
+                goal_badge = (
+                    "<span style='margin-left:6px;color:white;font-weight:900'>"
+                    f"{goal_badge}</span>"
+                )
+
             st.markdown(
                 f"""
-                <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:3px 0;color:white;font-size:13px">
-                  <div style="display:flex;gap:6px;white-space:nowrap">{badge}</div>
+                <div style="display:flex;align-items:center;justify-content:flex-end;
+                            gap:10px;padding:3px 0;color:white;font-size:13px">
 
-                  <div style="
-                      opacity:.95;
-                      white-space:nowrap;
-                      overflow:hidden;
-                      text-overflow:ellipsis;
-                      max-width:220px;
-                      text-align:right
-                  ">{name}</div>
+                <div style="display:flex;gap:6px;white-space:nowrap">{badge}</div>
 
-                  <div style="
-                      width:26px;height:26px;border-radius:999px;
-                      background:{AWAY_COLOR};
-                      border:2px solid white;
-                      display:flex;align-items:center;justify-content:center;
-                      font-weight:800;font-size:12px;
-                      flex:0 0 26px;
-                  ">{nr}</div>
+                <div style="
+                    opacity:.95;
+                    white-space:nowrap;
+                    overflow:hidden;
+                    text-overflow:ellipsis;
+                    max-width:220px;
+                    text-align:right
+                ">{name}{goal_badge}</div>
+
+                <div style="
+                    width:26px;height:26px;border-radius:999px;
+                    background:{AWAY_COLOR};
+                    border:2px solid white;
+                    display:flex;align-items:center;justify-content:center;
+                    font-weight:800;font-size:12px;
+                    flex:0 0 26px;
+                ">{nr}</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
         # bench
-        st.markdown("<div style='opacity:.5;font-size:12px;color:white;margin:8px 0;text-align:right'> Bench </div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='opacity:.5;font-size:12px;color:white;margin:8px 0;text-align:right'> Bench </div>",
+            unsafe_allow_html=True
+        )
 
         for nr, pid in away_bench:
             name = resolve_name(pid, name_lookup_events, away_name_team)
@@ -1296,29 +1680,64 @@ with mid_col:
             elif pid in away_off_map:
                 badge = sub_badge("off", away_off_map[pid])
 
+            goal_badge = away_goal_badge.get(pid, "")
+            if goal_badge:
+                goal_badge = (
+                    "<span style='margin-left:6px;color:white;font-weight:900'>"
+                    f"{goal_badge}</span>"
+                )
+
             st.markdown(
                 f"""
-                <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:2px 0;color:white;font-size:12px;opacity:.9">
-                  <div style="display:flex;gap:6px;white-space:nowrap">{badge}</div>
+                <div style="display:flex;align-items:center;justify-content:flex-end;
+                            gap:10px;padding:2px 0;color:white;font-size:12px;opacity:.9">
 
-                  <div style="
-                      white-space:nowrap;
-                      overflow:hidden;
-                      text-overflow:ellipsis;
-                      max-width:220px;
-                      text-align:right
-                  ">{name}</div>
+                <div style="display:flex;gap:6px;white-space:nowrap">{badge}</div>
 
-                  <div style="
-                      width:22px;height:22px;border-radius:999px;
-                      background:#374151;border:1px solid rgba(255,255,255,.4);
-                      display:flex;align-items:center;justify-content:center
-                  ">{nr if nr is not None else ''}</div>
+                <div style="
+                    white-space:nowrap;
+                    overflow:hidden;
+                    text-overflow:ellipsis;
+                    max-width:220px;
+                    text-align:right
+                ">{name}{goal_badge}</div>
+
+                <div style="
+                    width:22px;height:22px;border-radius:999px;
+                    background:#374151;border:1px solid rgba(255,255,255,.4);
+                    display:flex;align-items:center;justify-content:center
+                ">{nr if nr is not None else ''}</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
+    # =========================================================
+    # EPV (FULL WIDTH) ✅ buiten de 3-koloms layout
+    # =========================================================
+    st.markdown(
+        "<div style='font-weight:800;font-size:14px;color:white;margin:10px 0 6px 0'>"
+        "EXPECTED POSSESSION VALUE (EPV)"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+
+    fig, err = plot_epv_over_time_plotly(
+        events,
+        home_teamId,
+        away_teamId,
+        home_team,
+        away_team,
+        epv_col="EPV",
+        home_color=HOME_COLOR,
+        away_color=AWAY_COLOR
+    )
+
+    if err:
+        st.error(err)
+    else:
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 # ============================================================
 # RIGHT COL
@@ -1338,7 +1757,15 @@ with right_col:
     else:
         st.pyplot(fig, use_container_width=True)
 
-    st.markdown(
-        "<div class='card'><div class='muted'>R2</div><div class='big'>Placeholder (smalle visual)</div></div>",
-        unsafe_allow_html=True
-    )
+    fig, err = plot_key_pass_zones_with_arrows(
+                events,
+                team_id=away_teamId,
+                team_name=away_team,
+                team_color=AWAY_COLOR,
+                direction="RIGHT",    # AWAY attack direction
+                n_x=6, n_y=4
+            )
+    if err:
+        st.error(err)
+    else:
+        st.pyplot(fig, use_container_width=True)
