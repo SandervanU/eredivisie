@@ -262,6 +262,7 @@ def load_monte_db() -> pd.DataFrame:
     return pd.read_sql(q, engine)
 
 
+
 # -----------------------------
 # MAIN DATA PIPELINE (DB ONLY) ✅
 # -----------------------------
@@ -298,6 +299,22 @@ df[["hg", "ag"]] = df["score"].apply(lambda s: pd.Series(parse_score(s)))
 df[["home_pts", "away_pts"]] = df.apply(lambda r: pd.Series(points_from_goals(r["hg"], r["ag"])), axis=1)
 
 
+# -----------------------------
+# LAST UPDATE (max start datetime -> date only)
+# -----------------------------
+df["_start_dt"] = pd.to_datetime(df.get("startTime"), errors="coerce")
+
+# fallback als startTime leeg/NaT is: probeer startDate + startTime (als je die ooit splitst)
+if df["_start_dt"].isna().all():
+    # als je startDate al string is en startTime bv "19:00:00" zou zijn:
+    if "startDate" in df.columns and "startTime" in df.columns:
+        df["_start_dt"] = pd.to_datetime(
+            df["startDate"].astype(str) + " " + df["startTime"].astype(str),
+            errors="coerce"
+        )
+
+last_update = df["_start_dt"].max()
+last_update_str = last_update.date().isoformat() if pd.notna(last_update) else "—"
 
 
 # -----------------------------
@@ -310,10 +327,11 @@ st.markdown(
     f"""
     <div class="hero">
       <h1>Eredivisie Match Centre</h1>
-      <p>Wedstrijden + Monte Carlo voorspellingen    
+      <p>Observed Match Outcomes alongside xG-Based Monte Carlo Simulations
       <div style="margin-top:10px;">
         <span class="chip">Matches: {total_matches}</span>
-        <span class="chip">Mode: DB</span>
+        <span class="chip">Mode: Supabase Database</span>
+        <span class="chip">Last update: {last_update_str}</span>
       </div>
     </div>
     """,
@@ -504,6 +522,21 @@ with left:
     else:
         table = view[cols].copy()
 
+    
+    # --- Nettere kolomnamen (display labels) ---
+    col_labels = {
+        "match_id": "Match ID",
+        "startTime": "Kick-off Time",
+        "home_team": "Home Team",
+        "away_team": "Away Team",
+        "score": "Score",
+        "monte_outcome": "Monte Carlo score",
+        "monte_prob": "Monte Carlo probs (H/D/A)",
+        "Open": "Open",
+    }
+
+    # rename alleen de kolommen die er zijn
+    table = table.rename(columns={c: col_labels.get(c, c) for c in table.columns})
 
     # --- HTML tabel (in iframe) ---
     table_html = table.to_html(index=False, escape=False)
@@ -821,7 +854,7 @@ with right:
             paper_bgcolor="#0B1220",
             plot_bgcolor="#0F172A",
             title=dict(
-                text="Ranking: Actual vs Expected",
+                text="Actual Points vs Expected Points (Monte Carlo)",
                 x=0.0,
                 xanchor="left",
                 font=dict(size=18, color="white")
